@@ -84,8 +84,10 @@ impl Resampler {
             }
             let _ = rest;
             written += 1;
-            self.position += f64::from(self.pitch);
+            // The pitch moves first, then sets this frame's step: with no
+            // ramp, the target applies from the first frame on.
             self.pitch = step(self.pitch, target, ramp);
+            self.position += f64::from(self.pitch);
         }
         // Keep the unconsumed tail, including the sample the next call
         // interpolates towards.
@@ -106,11 +108,12 @@ fn clamp(pitch: f32) -> f32 {
     }
 }
 
-/// Moves `from` towards `to` by at most `step`, without overshooting.
+/// Moves `from` towards `to` by at most `step`, without overshooting. No
+/// ramp (zero, negative or not finite) takes the target at once.
 fn step(from: f32, to: f32, step: f32) -> f32 {
     let difference = to - from;
     if !step.is_finite() || step <= 0.0 {
-        return from;
+        return to;
     }
     if step >= difference.abs() {
         to
@@ -213,6 +216,17 @@ mod tests {
         );
         resampler.reset(f32::NAN);
         assert_eq!(resampler.pitch(), 1.0);
+    }
+
+    #[test]
+    fn no_ramp_takes_the_target_at_once() {
+        // Started at 1, asked for 2 with no ramp: every frame steps by 2.
+        let mut resampler = Resampler::new(1, 1.0);
+        let input: Vec<f32> = (0..9).map(|i| i as f32).collect();
+        let mut output = vec![0.0; 64];
+        let frames = resampler.convert(&input, &mut output, 2.0, 0.0, false);
+        assert_eq!(resampler.pitch(), 2.0);
+        assert_eq!(output[..frames], [0.0, 2.0, 4.0, 6.0]);
     }
 
     #[test]
